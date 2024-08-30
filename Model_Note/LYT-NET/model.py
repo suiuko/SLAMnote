@@ -299,27 +299,43 @@ class LYT(nn.Module):
         cb_processed = self.process_cb(cb)
         cr_processed = self.process_cr(cr)
 
+        # 将处理后的 Cb 和 Cr 通道连接在一起，形成参考特征图
         ref = torch.cat([cb_processed, cr_processed], dim=1)
-        lum = y_processed
+        lum = y_processed # 将处理好的Y通道特征图赋值给lum
+        
+        # 是一个最大池化层，用于将 Y 通道的特征图下采样 8 倍
         lum_1 = self.lum_pool(lum)
+        # 对下采样后的 lum 应用多头自注意力层
         lum_1 = self.lum_mhsa(lum_1)
+        # 对经过多头自注意力处理后的 lum_1 进行上采样。
         lum_1 = self.lum_up(lum_1)
+        # 将上采样后的亮度信息与原亮度信息相加
         lum = lum + lum_1
 
+        # 1*1 的卷积
         ref = self.ref_conv(ref)
+        
         shortcut = ref
+        # 将亮度信息的处理结果与参考特征图融合。
         ref = ref + 0.2 * self.lum_conv(lum)
+        # 通过 MSEFBlock 进一步处理融合后的特征图
         ref = self.msef(ref)
+        # 将处理后的 ref 与 shortcut 相加。
         ref = ref + shortcut
 
+        # ref和lum再次融合，并通过卷积层recombine进行处理
         recombined = self.recombine(torch.cat([ref, lum], dim=1))
+        # 将融合后的特征图通过final_adjustments 进行最后调整
         output = self.final_adjustments(recombined)
+        # 应用 sigmoid 激活函数生成输出。
         return torch.sigmoid(output)
     
-    def _init_weights(self):
+    def _init_weights(self): # 用于初始化网络中的卷积层和全连接层的权重。
         for module in self.children():
             if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
-                init.kaiming_uniform_(module.weight, a=0, mode='fan_in', nonlinearity='relu')
+                # 使用 Kaiming 初始化方法（He 初始化）初始化权重，适用于 ReLU 激活函数。
+                init.kaiming_uniform_(module.weight, a=0, mode='fan_in', nonlinearity='relu') 
+                # 如果模块中有偏置项 bias，则将其初始化为 0。
                 if module.bias is not None:
                     init.constant_(module.bias, 0)
                     
