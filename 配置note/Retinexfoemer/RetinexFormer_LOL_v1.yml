@@ -1,0 +1,188 @@
+# general settings
+# 名称，用于区分不同实验的标识
+name: Enhancement_RetinexFormer_LOL_v1
+# 指定模型的类型
+model_type: ImageCleanModel
+# 缩放比例
+scale: 1
+num_gpu: 1  # set num_gpu: 0 for cpu mode
+manual_seed: 100
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: TrainSet
+    # 数据集类型， 这里表示输入图像（低质量）都有对应的目标图像（高质量）
+    type: Dataset_PairedImage
+    
+    # 图像文件夹
+    dataroot_gt: data/LOLv1/Train/target
+    dataroot_lq: data/LOLv1/Train/input
+    # 是否在训练中应用几何增强
+    geometric_augs: true
+
+    # 文件名魔板，通常用于匹配数据集中的文件名格式
+    filename_tmpl: '{}'
+    # 数据输入输出方式，disk 为磁盘
+    io_backend:
+      type: disk
+
+    # data loader
+    # 对数据集进行随机打乱，打乱数据开业防止模型过拟合，提升模型的泛化能力
+    use_shuffle: true
+    # 每个 GPU 上用于数据加载线程数
+    num_worker_per_gpu: 8
+    # 每个 GPU 上批次大小，批次越大，训练越稳定
+    batch_size_per_gpu: 8
+
+    ### -------------Progressive training--------------------------
+    # mini_batch_sizes: [8,5,4,2,1,1]             # Batch size per gpu   
+    # iters: [46000,32000,24000,18000,18000,12000]
+    # gt_size: 384   # Max patch size for progressive training
+    # gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
+    # ### ------------------------------------------------------------
+
+    ### ------- Training on single fixed-patch size 128x128---------
+    mini_batch_sizes: [8]   
+    # 每个阶段的训练迭代次数 30W次迭代
+    iters: [300000]
+    # 固定的目标图像的大小
+    gt_size: 128   
+    # 如果使用渐进训练策略，次数组会包含不同阶段的目标图像大小，在这里仅设置 128，表示没有使用渐进训练。
+    gt_sizes: [128]
+    ### ------------------------------------------------------------
+
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+  # 验证设置
+  val:
+    # 验证数据集的名称
+    name: ValSet
+    # 狙击类型，与训练集相同
+    type: Dataset_PairedImage
+    dataroot_gt: data/LOLv1/Test/target
+    dataroot_lq: data/LOLv1/Test/input
+    io_backend:
+      type: disk
+
+# network structures
+# 配置生成模型的网络结构
+network_g:
+  type: RetinexFormer
+  # 数据图像的通道数，RGB通道为3
+  in_channels: 3
+  # 输出图像的通道数，通常与输入通道数相同
+  out_channels: 3
+  # 每层的特征数量（即卷积核的数量）。特征数量越多，模型的表达能力越强，但计算量和内存需求也更大
+  n_feat: 40
+  # 网络阶段数，不同阶段可能对应不同的网络深度和复杂度
+  stage: 1
+  # [1,2,2]，表示第一阶段有 1 个块，第二和第三阶段各有 2 个块
+  num_blocks: [1,2,2]
+
+
+# path
+path:
+  # 预训练模型的路径。如果指定了路径，模型将加载预训练权重，这可以加快训练收敛速度。
+  pretrain_network_g: ~
+  # 加载预训练模型时必须完全匹配模型的结构和参数。如果模型结构发生变化，可能需要将此项设置为 false。
+  strict_load_g: true
+  # 如果训练中断，可以指定一个状态文件路径来恢复训练。
+  resume_state: ~
+
+# training settings
+train:
+  # 总训练迭代次数，这里是 15W 次迭代
+  total_iter: 150000
+  # 预热迭代
+  warmup_iter: -1 # no warm up
+  # 是否在反向传播中裁剪梯度，可以防止梯度爆炸，保持训练的稳定性
+  use_grad_clip: true
+
+  # Split 300k iterations into two cycles. 
+  # 1st cycle: fixed 3e-4 LR for 92k iters. 
+  # 2nd cycle: cosine annealing (3e-4 to 1e-6) for 208k iters.
+  # 控制学习率的调度策略
+  scheduler: 
+    # 学习律法调度器的类型， 这里使用余弦退火重启调度器
+    type: CosineAnnealingRestartCyclicLR
+    # 不同周期的迭代次数
+    # 第一次46000，第二次104000
+    periods: [46000, 104000]   
+    # 不同周期重启时的权重
+    restart_weights: [1,1]
+    # 不同周期的最小学习率
+    eta_mins: [0.0003,0.000001]   
+  
+  mixing_augs: # 混合增强策略的配置
+    # 是否使用mixup增强，这是一种数据增强的技术，通过混合不同样本的输入和标签来增强数据多样性。
+    mixup: true
+    # 控制混合的比例
+    mixup_beta: 1.2
+    # 是否在混合增强中包含原始样本。设置为 true 表示保留部分原始样本，以保持模型的识别能力
+    use_identity: true
+
+  optim_g:
+    # 优化器的类型，Adam 适合深度学习 
+    type: Adam
+    # 学习率，学习率越高，模型训练速度越快，但是高学习率可能导致模型发散。
+    lr: !!float 2e-4
+    # 权重衰减，L2正则化参数，通常用于防止过拟合。
+    # weight_decay: !!float 1e-4
+    # 优化器的 beta 参数，控制一阶和二阶矩估计的指数衰减率
+    betas: [0.9, 0.999]
+  
+  # losses
+  # 像素级损失函数的配置
+  pixel_opt:
+    # 损失函数类型，L1Loss即绝对误差损失
+    type: L1Loss
+    # 损失权重，通常设置为1，表示不改变损失比例
+    loss_weight: 1
+    # 损失的计算方式，mean 表示计算损失的平均值
+    reduction: mean
+
+# validation settings
+val:
+  # 滑动窗口的大小，通常用于处理大图像的部分重叠区域
+  window_size: 4
+  # 验证的频率，即每1000 次迭代进行一次验证
+  val_freq: !!float 1e3
+  # 是否保存验证过程中生成的图像
+  save_img: false
+  # 是否将图像从 RGB 转换为 BGR
+  rgb2bgr: true
+  # 是否在验证过程中使用图像处理
+  use_image: false
+  # 验证时使用的最大 mini-batch 数量，设置为 8，以控制验证的批次大小。
+  max_minibatch: 8
+
+  metrics:
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      #  裁剪边界的像素数，用于计算 PSNR 时忽略图像边缘的影响
+      crop_border: 0
+      # 是否在 Y 通道（亮度通道）上计算 PSNR，设置为 false 表示在 RGB 图像上计算。
+      test_y_channel: false
+
+# logging settings
+logger:
+  # 打印日志的频率，设置为每 500 次打印一次
+  print_freq: 500
+  # 保存检查点的频率，1000一次
+  save_checkpoint_freq: !!float 1e3
+  # 是否使用 TensorBoard 记录日志
+  use_tb_logger: true
+  # 使用 Weights & Biases 进行实验跟踪的配置
+  wandb:
+    # 项目的名称，这里是 low_light
+    project: low_light
+    # 如果是从之前的实验中恢复，可以指定一个 resume_id 来继续追踪
+    resume_id: ~
+
+# dist training settings
+# 分布式训练设置
+dist_params:
+  backend: nccl
+  port: 29500

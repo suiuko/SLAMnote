@@ -1,0 +1,189 @@
+# general settings
+name: wavenet
+
+# 指定正在使用的模型类型，必须与模型的架构和训练管道相匹配
+# 将其更改为不兼容的内容，训练将失败
+model_type: ImageCleanModel 
+
+scale: 1 # 表示图像的缩放因子，
+num_gpu: 1  # set num_gpu: 0 for cpu mode
+manual_seed: 5 # 随机数生成的种子，可能会稍微影响模型的性能。
+
+# dataset and data loader settings
+#### datasets
+datasets:
+  train:
+    # 训练集的名称
+    name: TrainSet 
+
+    # Dataset_PairedImage 表示每个低质量 (LQ) 图像都有对应的真实 (GT) 高质量图像
+    type: Dataset_PairedImage  
+    # 真实图像的路径
+    dataroot_gt: ../dataset/LOLdataset/our485/high/ 
+    # 低质量图像路径
+    dataroot_lq: ../dataset/LOLdataset/our485/low/
+    
+    # 是否在训练期间使用几何增强
+    # 此功能可以提高泛化能力，但可能会使训练更加复杂
+    geometric_augs: true
+
+    # 文件名格式模板
+    filename_tmpl: '{}'
+    # 指定如何加载数据，disk表示从本地文件系统加载
+    io_backend:
+      type: disk
+
+    # data loader
+    # 数据集在每个时期都会被打乱，从而提高泛化能力
+    use_shuffle: true
+    # 每个 GPU 用于数据加载的工作线程数。更多的工作线程可以加快数据加载速度，但也会消耗更多内存。
+    num_worker_per_gpu: 8
+    # 每个 GPU 每批次的样本数量。批次越大，需要的内存越多，但可以使训练更稳定
+    batch_size_per_gpu: 8
+
+    # 从图像中裁剪出的块的大小。如果更改这些，请确保您的模型可以处理新的输入大小
+    GT_size: 256     # size you want to crop out as input sample.
+    LQ_size: 256
+    # 是否应用翻转或旋转增强。这些可以提高模型的鲁棒性
+    use_flip: false
+    use_rot: false
+    # 指定颜色格式（此处为 RGB）。如果您的图片采用不同的颜色格式，请进行相应更改。
+    color: RGB
+
+
+    ### -------------Multi-scale Training Strategy--------------------------
+    # 不同规模下每个 GPU 的批次大小，调整这些会影响训练速度和稳定性。
+    # 较小的批次可能会提高内存效率，但可能会使训练更加嘈杂
+    batch_sizes: [1,1,1,2]             # Batch size per gpu   
+
+    # 多尺度训练中补丁的最小大小。较小的补丁可以带来更多不同的训练数据，从而有可能提高模型的稳健性。
+    min_patch_size: 192
+
+    step: 3
+    sort: 0 #1 represents descending and 0 represents ascending
+    stride: 32 # 较小的值stride意味着重叠的补丁较多，这可以改善训练但会减慢速度。
+    patience: 19
+    state: 1 # 0 means start with crop 1 means start with resize
+    ### ------------------------------------------------------------
+
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+  val: # 验证数据集
+    name: ValSet
+    type: Dataset_PairedImage
+    dataroot_gt: ../dataset/LOLdataset/eval15/high/
+    dataroot_lq: ../dataset/LOLdataset/eval15/low/
+    io_backend:
+      type: disk
+    val_crop: 
+
+
+# network structures
+network_g: # 定义生成器网络的结构
+  # 更改type为不同的架构将从根本上改变模型处理图像的方式
+  type: WaveNet_B
+
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# training settings
+train:
+  # 总共的epoch，增加会有更好的效果
+  total_epochs: 1000
+  total_iter: 145000
+
+  # 逐步增加学习率的迭代次数，负值表示不进行预热。
+  # 预热可以防止在训练开始时突然进行大量更新
+  warmup_iter: -1 # no warm up
+  # 是否在反向传播期间剪切梯度。这可以帮助防止梯度爆炸。
+  use_grad_clip: true
+
+  # Split 300k iterations into two cycles. 
+  # 1st cycle: fixed 3e-4 LR for 92k iters. 
+  # 2nd cycle: cosine annealing (3e-4 to 1e-6) for 208k iters.
+  # 控制学习率计划
+  scheduler:
+    # 一个特定的学习率调度程序，在每个周期重新启动学习率
+    type: CosineAnnealingRestartCyclicLR
+    periods: [450, 550]       
+    restart_weights: [1,1]
+    eta_mins: [0.000125,0.000001]   
+  
+  mixing_augs:
+    mixup: true
+    mixup_beta: 1.2
+    use_identity: true
+
+  # 指定优化器设置
+  optim_g:
+    # 具有权重衰减的 Adam 优化器的变体。调整lr（学习率）和betas（动量项）可以显著影响训练收敛和稳定性
+    type: AdamW
+    lr: !!float 1.25e-4
+    # weight_decay: !!float 1e-4
+    betas: [0.9, 0.999]
+  
+  # losses
+  # 定义损失函数
+  pixel_opt:
+    # 自定义损失函数。
+    type: ULoss
+    # 调整loss_weight会改变此损失对总损失函数的影响。
+    loss_weight: 1
+    # reduction指定损失的汇总方式（平均值、总和等）
+    reduction: mean
+
+# validation settings
+# 验证设置
+val:
+  window_size: 4
+  val_freq: !!float 1e2
+  save_img: false
+  rgb2bgr: true
+  use_image: false
+  max_minibatch: 8
+  val_crop:
+
+  # 
+  metrics:
+    # 峰值信噪比，常用于测量重建图像的质量
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+
+    # 结构相似性指数，另一个衡量图像质量的指标
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
+
+# logging settings
+
+# 记录训练信息
+logger:
+  # 打印训练日志的频率
+  print_freq: 100
+
+  # 保存模型检查点的频率
+  save_checkpoint_freq: !!float 1e2
+
+  # 是否使用 TensorBoard 进行可视化
+  use_tb_logger: true
+
+  # 用于实验跟踪的权重和偏差集成
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+# 分布式训练设置
+dist_params:
+  # 布式训练的通信后端（例如 NCCL、Gloo）。
+  backend: nccl
+  # 通信的端口号
+  port: 29500
