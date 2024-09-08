@@ -176,7 +176,8 @@ class IG_MSA(nn.Module): # 模型中 illumination-Guided Multi-head Self-Attenti
         self.to_q = nn.Linear(dim, dim_head * heads, bias=False)
         self.to_k = nn.Linear(dim, dim_head * heads, bias=False)
         self.to_v = nn.Linear(dim, dim_head * heads, bias=False)
-
+        print(f"test11: {self.to_q.shape}")
+        
         # 定义了一个可学习的参数rescale，用于缩放注意力权重，形状为[heads ,1,1]
         # 每个头都有一个独立的缩放参数
         self.rescale = nn.Parameter(torch.ones(heads, 1, 1))
@@ -208,18 +209,43 @@ class IG_MSA(nn.Module): # 模型中 illumination-Guided Multi-head Self-Attenti
         """
         # 获取输入特征图的形状信息，分别是批次大小b，高度h，宽度w和通道数c
         b, h, w, c = x_in.shape
+        
+        print(f"11111x_in shape: {x_in.shape}")
+        # 11111x_in shape: torch.Size([1, 256, 256, 32])
+        
+        print(f"12222illu_fea_trans shape: {illu_fea_trans.shape}")
+        # 12222illu_fea_trans shape: torch.Size([1, 256, 256, 32])
+        
         x = x_in.reshape(b, h * w, c)# 将输入特征图重新排列，hw表示高度和宽度的乘积
         q_inp = self.to_q(x)  
         k_inp = self.to_k(x)
         v_inp = self.to_v(x)
-
+        
+        print(f"1333333q_inp shape: {q_inp.shape}")
+        print(f"1444444k_inp shape: {k_inp.shape}")
+        print(f"1555555v_inp shape: {v_inp.shape}")
+        # shape: torch.Size([1, 65536, 32])
+        
+        
         # 传入光照特征
         illu_attn = illu_fea_trans # illu_fea: b,c,h,w -> b,h,w,c
         # 使用map和rearrange函数，进行形状变换
         q, k, v, illu_attn = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.num_heads),
                                  (q_inp, k_inp, v_inp, illu_attn.flatten(1, 2)))
+        print(f"1666666q shape after rearrange: {q.shape}")
+        print(f"17777777k shape after rearrange: {k.shape}")
+        print(f"18888888v shape after rearrange: {v.shape}")
+        print(f"199999999illu_attn shape after rearrange: {illu_attn.shape}")
+        # 1666666q shape after rearrange: torch.Size([1, 1, 65536, 32])
+        # 17777777k shape after rearrange: torch.Size([1, 1, 65536, 32])
+        # 18888888v shape after rearrange: torch.Size([1, 1, 65536, 32])
+        # 199999999illu_attn shape after rearrange: torch.Size([1, 1, 65536, 32])
+        
+        
         # 将值向量 v 与光照注意力 illu_attn 相乘，实现一种基于光照信息的加权机制。
         v = v * illu_attn
+        print(f"20000000v shape after element-wise multiplication: {v.shape}")
+        # 20000000v shape after element-wise multiplication: torch.Size([1, 1, 65536, 32])
 
         # q: b,heads,hw,c
         # 转置查询和键向量，使其形状变为 [b, heads, dim_head, hw]，为后续的矩阵乘法准备。
@@ -314,17 +340,30 @@ class IGAB(nn.Module): # Illumination-Guided Attention Block
         """
         # X是input
         # illu_fea是光照特征图
+        print(f"x input shape (before permute): {x.shape}")
+        # x input shape (before permute): torch.Size([1, 32, 256, 256])
+        
+        print(f"illu_fea input shape (before permute): {illu_fea.shape}")
+        # illu_fea input shape (before permute): torch.Size([1, 32, 256, 256])
+        
+        
         x = x.permute(0, 2, 3, 1)# 对输入特征图 x 进行维度转换，形状变为 [b, h, w, c]
 
         for (attn, ff) in self.blocks:# 遍历每个块， attn是IG_MSA模块，ff是PreNorm模块
-
+            
             # 将输入特征图 x 和光照特征 illu_fea 传递给 IG_MSA 层，计算注意力机制，
             # 并将结果与输入特征图相加（残差连接）
             x = attn(x, illu_fea_trans=illu_fea.permute(0, 2, 3, 1)) + x
-
+            print(f"2111111x shape after attention: {x.shape}")
+            # 2111111x shape after attention: torch.Size([1, 256, 256, 32])
+            
             # 将 x 传递给 PreNorm 层，进行前馈神经网络处理，并将结果与输入特征图相加（残差连接）。
             x = ff(x) + x
+            print(f"22222222x shape after feed-forward: {x.shape}")
+            # 22222222x shape after feed-forward: torch.Size([1, 256, 256, 32])
         out = x.permute(0, 3, 1, 2)
+        print(f"2333333333333out shape (after permute back): {out.shape}")
+        # 2333333333333out shape (after permute back): torch.Size([1, 32, 256, 256])
         return out
 
 # ----------------TAG4-----------------
@@ -472,12 +511,12 @@ class RetinexFormer(nn.Module):
         return out
 
 
-# if __name__ == '__main__':
-#     from fvcore.nn import FlopCountAnalysis
-#     model = RetinexFormer(stage=1,n_feat=40,num_blocks=[1,2,2]).cuda()
-#     print(model)
-#     inputs = torch.randn((1, 3, 256, 256)).cuda()
-#     flops = FlopCountAnalysis(model,inputs)
-#     n_param = sum([p.nelement() for p in model.parameters()])  # 所有参数数量
-#     print(f'GMac:{flops.total()/(1024*1024*1024)}')
-#     print(f'Params:{n_param}')
+if __name__ == '__main__':
+    from fvcore.nn import FlopCountAnalysis
+    model = RetinexFormer(stage=1,n_feat=32,num_blocks=[1,1,1]).cuda()
+    print(model)
+    inputs = torch.randn((1, 3, 256, 256)).cuda()
+    flops = FlopCountAnalysis(model,inputs)
+    n_param = sum([p.nelement() for p in model.parameters()])  # 所有参数数量
+    print(f'GMac:{flops.total()/(1024*1024*1024)}')
+    print(f'Params:{n_param}')
